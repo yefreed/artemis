@@ -1,0 +1,1265 @@
+/********************************************************************************
+Project:       AXPO 360T-Endur Interface implementation
+Script Name:   AXPO_INC_360T_Interface
+Script Type:   Include
+Status:        complete
+
+Revision History:
+1.0 - 24-01-2013 - tsaipriy : Initial creation and testing
+1.1 - 17-05-2013 - tajaykuma : Enhancement to set substrategy field
+1.2 - 31-05-2013 - tajaykuma : IID7860: Handling special charachters in substrategy field
+1.3 - 31.05.2013 - travipali :Added function setTranfField that returns TRUE(1) if value is updated or remains unchanged else returns FALSE for API TRANF_SetField. 
+1.4 - 08.11.2013 - tarpising :SR1423: Change in treatment of SD deals in 360T
+1.5 - 20.11.2013 - tarpising :SR2325 : FX deals inported incorrectly into Endur from 360T 
+1.6 - 17.01.2014 - tarpising :SR2682:store 360T Hedge Type in Endur Tran info field
+
+Description:
+Include script for the 360T-Endur interface
+
+Dependencies:
+None
+
+**********************************************************************************/
+
+#include "EGL_INC_ChangeFileVersion"
+#include "EGL_INC_ExceptionLogging"
+#include "EGL_INC_Utilities"
+#include "EGL_INC_Interface_Functions" //1.2: Handling special charachters in substrategy field
+
+TablePtr getXMLFiles(string strFileInputPath);
+TablePtr retrieveXMLData(string strFilePath,string strFileName);
+TablePtr createFXTable();
+string setFXDealDetails(TablePtr tblFX,TablePtr tblXMLData);
+int getFXHoldingInsNum(int intCurrency1, int intCurrency2);
+int getInternalBUnit(string strPortfolio);
+int getExternalBUnit(string strExtCpty);
+int moveFile(string strSourcePath,string strFileName,string strDestPath,int intEmail);
+int getTranNum(string strReferenceID);
+
+string convertSpecialStringToString(string strSource); //1.2: Handling special charachters in substrategy field
+
+int BuildFlatTableFromXMLTable(TablePtr tblResult, TablePtr tblXMLData, int intDeep);
+string G_SCRIPT_NAME = get_script_name();
+
+#INCLUDE_DELIMITER
+/*********************************************************************************
+Function:  getXMLFiles
+
+Input Parameter:
+string     strFileInputPath: File Input Path
+
+Return Value: TablePtr: Table with XML files list      
+
+Description:
+The function retrieves the XML file name list from the INPUT Path.
+*********************************************************************************/
+
+TablePtr getXMLFiles(string strFileInputPath)
+{
+    TablePtr tblXMLFiles;
+    tblXMLFiles = EGL_TABLE_ListFilesInDirectory(strFileInputPath,0,"*.xml");
+    return tblXMLFiles;
+}
+
+/*********************************************************************************
+Function:  retrieveXMLData
+
+Input Parameter:
+string  strFilePath: Input file Path
+string  strFileName: XML File Name to process
+
+Return Value: TablePtr 
+
+Description:
+The function processes the XML file, check for valid data, deletes the unwanted columns
+*********************************************************************************/
+
+TablePtr retrieveXMLData(string strFilePath,string strFileName)
+{
+    string  strXMLFile,
+            strMessage,
+            strProductColName;
+            
+   TablePtr tblXML,
+            tblFlatXML,
+            tblProduct,
+            tblError;
+   int      intRetVal;
+   
+   tblXML = TABLE_New();
+   tblFlatXML = TABLE_New();
+   strXMLFile = STR_ReadFromFile(strFilePath+strFileName);
+   if(STR_IsEmpty(strXMLFile) || STR_IsNull(strXMLFile))
+   {
+      strMessage = "XML String is empty for "+strFilePath+strFileName;
+      LogException( G_EXCEPTION_CLASS_MSG, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_NO);
+      SCRIPT_PostStatus(strMessage);   
+      return tblError;
+   }
+   tblXML = TABLE_XMLStringToTable(strXMLFile);
+   if(TABLE_IsTableValid(tblXML)==FALSE)
+   {
+      strMessage = "XML process returns Invalid table for "+strFileName;
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_NO);
+      SCRIPT_PostStatus(strMessage);   
+      return tblError;
+   }
+   tblProduct = TABLE_GetTableN(tblXML,"product",1);
+   if(TABLE_IsTableValid(tblProduct)==FALSE)
+   {
+      strMessage = "Product column not found or Invalid table in that column "+strFileName;
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_NO);
+      SCRIPT_PostStatus(strMessage);   
+      return tblError;
+   }
+   strProductColName = TABLE_GetColName(tblProduct,1);
+   if(!STR_IEqual(strProductColName,"fxOutright"))
+   {
+      strMessage = "FX product type is not FX Forward. Cant process the file "+strFileName;
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_NO);
+      SCRIPT_PostStatus(strMessage);   
+      return tblError;
+   }
+   //Delete the unnecessary columns from the XML, as it will help to create a flat table with valid data rows
+   intRetVal = TABLE_DelColN(tblXML,"participants");
+   if(intRetVal!=1)
+   {
+      strMessage = "Column- 'Participants' not found in XML "+strFileName;
+      LogException( G_EXCEPTION_CLASS_MSG, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_NO);
+      SCRIPT_PostStatus(strMessage);
+   }
+   intRetVal = TABLE_DelColN(tblXML,"competitiveQuotes");
+   if(intRetVal!=1)
+   {
+      strMessage = "Column- 'competitiveQuotes' not found in XML "+strFileName;
+      LogException( G_EXCEPTION_CLASS_MSG, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_NO);
+      SCRIPT_PostStatus(strMessage);
+   }
+   strMessage = "BuildFlatTableFromXMLTable for XML File "+strFileName;
+   LogException( G_EXCEPTION_CLASS_MSG, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_NO);
+   SCRIPT_PostStatus(strMessage);
+   intRetVal = BuildFlatTableFromXMLTable(tblFlatXML, tblXML, 1);
+   return tblFlatXML;
+}
+/*********************************************************************************
+Function:  createFXTable()
+
+Input Parameter:
+none
+
+Return Value: TablePtr - returns a memory table which has the FX input structure
+
+Description:
+This function creates a memory table to book the FX deal
+*********************************************************************************/
+
+TablePtr createFXTable()
+{
+   TablePtr tblFX;
+   tblFX = TRAN_CreateFxInsertTable();
+   return tblFX;
+}
+/*********************************************************************************
+Function:  setFXDealDetails
+
+Input Parameter:
+TablePtr   tblFX - Empty table with FX Input structure, to set the field details and book the FX deal
+TablePtr tblXMLData - XML file converted to flat table structure, instead of nested XML Nodes
+
+Return Value: Empty string on success and error message message on failure scenarios will be returned
+
+Description:
+Thsi function gets all the required fields from XML and manipulate the needed field values and set the data to the FX table and book the deal
+*********************************************************************************/
+
+string setFXDealDetails(TablePtr tblFX, TablePtr tblXMLData)
+{
+   int      intInsNum,
+            intCflowType,
+            intIntBUnit,
+            intIntLEntity,
+            intIntPortfolio,
+            intExtBUnit,
+            intExtLEntity,
+            intValueDate,
+            intCurrency1,
+            intCurrency2,
+            intRetVal,
+            intColNum,
+            intRowNum,
+            intPortfolio,
+            intTradeDate,
+            intTranNum,
+            intPos,
+            intEndurTrader;
+
+   double      dblNotnlAmount,
+               dblOppAmount,
+               dblPrice,
+               dblSpotRate,
+               dblFwdPts;
+               
+   string      strSelect,
+               strMessage,
+               strReferenceID,
+               strTradeDate,
+               strBuyer,
+               strSeller,
+               strValueDate,
+               strNotnlCurrency,
+               strCurrency1,
+               strCurrency2,
+               strNotnlAmount,
+               strOppAmount,
+               strPrice,
+               strIntCpty,
+               strEndurTrader,
+               strBook,
+               strFXUsage,
+               strExtCpty,
+               strSpotRate,
+               strDealDirection,
+               strTradeDateTime,
+               strHedgeType,
+               strSubstrategy,  //1.1
+               strOrigBuySell,//1.5
+               strDealtRate;//1.5
+   
+   TRANSACTION* trnPtr;
+   
+   TablePtr tblTranInfo; //1.1
+
+   intColNum = TABLE_GetColNum(tblXMLData,"referenceId");
+   if(intColNum<1)
+   {
+      strMessage = "Reference ID Column not found";
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }
+
+   strReferenceID = TABLE_GetString(tblXMLData,intColNum,1);
+
+   intTranNum = getTranNum(strReferenceID);
+   if(intTranNum == -1)
+   {
+      strMessage = "Error in checking existing deal for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }
+   else if(intTranNum==FALSE)
+   {
+      strMessage = "No existing deal found for Reference ID "+strReferenceID+".Proceeding with XML Processing";
+      LogException( G_EXCEPTION_CLASS_MSG, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_NO);
+      SCRIPT_PostStatus(strMessage);
+   }
+   else
+   {
+      strMessage = "Existing deal found for Reference ID "+strReferenceID+" with Tran num "+intTranNum;
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }
+
+   intColNum = TABLE_GetColNum(tblXMLData,"tradeDate");
+   if(intColNum<1)
+   {
+      strMessage = "Trade Date Column not found for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }
+
+   strTradeDateTime= TABLE_GetString(tblXMLData,intColNum,1);
+   if(STR_IsEmpty(strTradeDateTime))
+   {
+      strMessage = "Trade Date not found in XML for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }
+   intPos = STR_FindSubString(strTradeDateTime,"T");
+   if(intPos<=0)
+   {
+      strMessage = "Invalid Trade Date format given in XML for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+
+   strTradeDate = STR_Substr(strTradeDateTime,0,intPos);
+   intTradeDate = DATE_ParseString(strTradeDate);
+   if(intTradeDate<=0)
+   {
+      strMessage = "Error in retrieving Trade Date Column for Reference ID "+strReferenceID+" .Trade Date in XML after processing is '"+strTradeDate+"'";
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }
+
+   intColNum = TABLE_GetColNum(tblXMLData,"buyer");
+   if(intColNum<1)
+   {
+      strMessage = "Buyer Column not found for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+
+   strBuyer = TABLE_GetString(tblXMLData,intColNum,1);
+
+   intColNum = TABLE_GetColNum(tblXMLData,"seller");
+   if(intColNum<1)
+   {
+      strMessage = "Seller Column not found for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }
+
+   strSeller = TABLE_GetString(tblXMLData,intColNum,1);
+
+   intColNum = TABLE_GetColNum(tblXMLData,"effectiveDate");
+   if(intColNum<1)
+   {
+      strMessage = "Effective Date Column not found for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }   
+   strValueDate = TABLE_GetString(tblXMLData,intColNum,1);
+   intValueDate = DATE_ParseString(strValueDate);
+   if(intValueDate<=0)
+   {
+      strMessage = "Error in retrieving Effective Date Column for Reference ID "+strReferenceID+" .Effective Date in XML after processing is '"+strValueDate+"'";
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   intColNum = TABLE_GetColNum(tblXMLData,"notionalCurrency");
+   if(intColNum<1)
+   {
+      strMessage = "Notional Currency Column not found for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }   
+   strNotnlCurrency = TABLE_GetString(tblXMLData,intColNum,1);  
+
+   intColNum = TABLE_GetColNum(tblXMLData,"currency1");
+   if(intColNum<1)
+   {
+      strMessage = "Currency1 Column not found for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }
+   strCurrency1 = TABLE_GetString(tblXMLData,intColNum,1);   
+
+   intColNum = TABLE_GetColNum(tblXMLData,"currency2");
+   if(intColNum<1)
+   {
+      strMessage = "Currency2 Column not found for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   strCurrency2 = TABLE_GetString(tblXMLData,intColNum,1);   
+
+   intColNum = TABLE_GetColNum(tblXMLData,"notionalAmount");
+   if(intColNum<1)
+   {
+      strMessage = "Notional Amount Column not found for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage); 
+      return strMessage;
+   }
+   if(STR_IEqual(strNotnlCurrency,strCurrency1))
+   {
+      strNotnlAmount = TABLE_GetString(tblXMLData,intColNum,1);
+      dblNotnlAmount = STR_StrToDouble(strNotnlAmount);
+   }
+   else
+   {
+      strOppAmount = TABLE_GetString(tblXMLData,intColNum,1);
+      dblOppAmount = STR_StrToDouble(strOppAmount);
+   }
+
+   if((dblNotnlAmount == DOUBLE_ERROR) || (dblOppAmount == DOUBLE_ERROR))
+   {
+      strMessage = "Not able to convert the Notional Amount string to double "+strNotnlAmount+" for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;   
+   }
+
+   intColNum = TABLE_GetColNum(tblXMLData,"oppositeAmount");
+   if(intColNum<1)
+   {
+      strMessage = "Opposite Amount Column not found";
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   if(STR_IEqual(strNotnlCurrency,strCurrency1))
+   {
+      strOppAmount = TABLE_GetString(tblXMLData,intColNum,1);
+      dblOppAmount = STR_StrToDouble(strOppAmount);
+   }
+   else if(STR_IEqual(strNotnlCurrency,strCurrency2))
+   {
+      strNotnlAmount = TABLE_GetString(tblXMLData,intColNum,1);
+      dblNotnlAmount = STR_StrToDouble(strNotnlAmount);  
+   }
+   else
+   {
+      strMessage = "Invalid Notional Currency '"+strNotnlCurrency+"' for Reference ID '"+strReferenceID+"'";
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   if((dblNotnlAmount == DOUBLE_ERROR) || (dblOppAmount == DOUBLE_ERROR))
+   {
+      strMessage = "Not able to convert the Opposite Amount string to double '"+strOppAmount+"' for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;   
+   }
+
+   //get the column name for the FX price
+   intColNum = TABLE_GetColNum(tblXMLData,"outrightRate");
+   if(intColNum<1)
+   {
+      strMessage = "OutrightRate Column not found for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   strPrice = TABLE_GetString(tblXMLData,intColNum,1);
+   //convert the string price to double
+   dblPrice = STR_StrToDouble(strPrice);
+   if(dblPrice == DOUBLE_ERROR)
+   {
+      strMessage = "Not able to convert the Price string to double - '"+strPrice+"' for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;   
+   }
+
+
+   //get the column name for the FX price
+   intColNum = TABLE_GetColNum(tblXMLData,"referenceSpotRate");
+   if(intColNum<1)
+   {
+      strMessage = "referenceSpotRate Column not found for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   strSpotRate = TABLE_GetString(tblXMLData,intColNum,1);
+   //convert the string price to double
+   dblSpotRate = STR_StrToDouble(strSpotRate);
+   if(dblSpotRate == DOUBLE_ERROR)
+   {
+      strMessage = "Not able to convert the SpotRate string to double - '"+strSpotRate+"' for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;   
+   }
+   dblFwdPts = dblSpotRate-dblPrice; //calculate the forward points, as Endur will calculate the FX rate from the spot rate and forward points
+
+   intRetVal = TABLE_SortColN(tblXMLData,"Name");
+   intRowNum = TABLE_FindStringN(tblXMLData,"Name","Endur Trader",FIRST_IN_GROUP);
+   if(intRowNum<=0)
+   {
+      strMessage = "Cannot find the Custom Field 'Endur Trader' in XML for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   strEndurTrader = TABLE_GetStringN(tblXMLData,"Value",intRowNum);
+
+   intRowNum = TABLE_FindStringN(tblXMLData,"Name","Book",FIRST_IN_GROUP);
+   if(intRowNum<=0)
+   {
+      strMessage = "Cannot find the Custom Field 'Book' in XML for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   strBook = TABLE_GetStringN(tblXMLData,"Value",intRowNum);
+
+   intRowNum = TABLE_FindStringN(tblXMLData,"Name","FX-Usage",FIRST_IN_GROUP);
+   if(intRowNum<=0)
+   {
+      strMessage = "Cannot find the Custom Field 'FX-USAGE' in XML for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   strFXUsage = TABLE_GetStringN(tblXMLData,"Value",intRowNum);
+   if(STR_IEqual("FX Selldown",strFXUsage))
+   {
+      strFXUsage = get_config_value("FX Selldown");
+   }
+   
+   //1.1 - Start - Enhancement to set substrategy field
+   intRowNum = TABLE_FindStringN(tblXMLData,"Name","Substrategy",FIRST_IN_GROUP);
+   if(intRowNum<=0)
+   {
+      strMessage = "Cannot find the Custom Field 'Substrategy' in XML for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   strSubstrategy = TABLE_GetStringN(tblXMLData,"Value",intRowNum);
+   //1.1 - End
+   
+   //1.2: Start: Handling special charachters in substrategy field
+   if (STR_IsNotEmpty(strSubstrategy))
+   {
+      strSubstrategy = convertSpecialStringToString(strSubstrategy);
+   }
+   //1.2: End
+
+   //Verify the value of Hedge Type. If it is CF or SD & the value of custom fields are Not Applicable, move the XML to NOT_Applicable folder
+   intRowNum = TABLE_FindStringN(tblXMLData,"Name","Hedge Type",FIRST_IN_GROUP);
+   if(intRowNum<=0)
+   {
+      strMessage = "Cannot find the Custom Field 'Hedge Type' in XML for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   strHedgeType = TABLE_GetStringN(tblXMLData,"Value",intRowNum);
+   if(STR_IEqual(strHedgeType,"CF")) //1.4
+   {
+      if (STR_IEqual(strEndurTrader,"Not Applicable")&& STR_IEqual(strBook,"Not Applicable") && STR_IEqual(strFXUsage,"Not Applicable"))
+      {
+         strMessage = "Hedge Type is CF and custom fields has 'Not Applicable' for Reference ID "+strReferenceID+". Moving this to NOT_APPLICABLE Folder";//1.4
+         LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_NO);
+         SCRIPT_PostStatus(strMessage);
+         strMessage="NOT_APPLICABLE";  
+         return strMessage;   
+      }
+      else
+      {
+         strMessage = "Hedge Type is CF. But custom fields doesnt have 'Not Applicable' value for Reference ID "+strReferenceID+". Moving the XML to ERROR Folder";
+         SCRIPT_PostStatus(strMessage);
+         return strMessage;
+      }
+   }
+   else if(STR_IEqual(strEndurTrader,"Not Applicable"))
+   {
+      strMessage = "ERROR! Hedge Type '"+strHedgeType+"' is not CF or SD and custom fields 'Endur Trader' has value 'Not Applicable' for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);
+      return strMessage;   
+   }
+   else if(STR_IEqual(strBook,"Not Applicable"))
+   {
+      strMessage = "ERROR! Hedge Type '"+strHedgeType+"' is not CF or SD and custom fields 'Book' has value 'Not Applicable' for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);
+      return strMessage;   
+   }
+   else if(STR_IEqual(strFXUsage,"Not Applicable"))
+   {
+      strMessage = "ERROR! Hedge Type '"+strHedgeType+"' is not CF or SD and custom fields 'FX-USAGE' has value 'Not Applicable' for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);
+      return strMessage;   
+   }
+
+   intEndurTrader = REF_GetValue(PERSONNEL_TABLE,strEndurTrader);
+   if(intEndurTrader<=0)
+   {
+      strMessage = "Invalid Trader Name '"+strEndurTrader+"' for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;   
+   }
+   intPortfolio = REF_GetValue(PORTFOLIO_TABLE,strBook);
+   if(intPortfolio<=0)
+   {
+      strMessage = "Invalid Portfolio Name '"+strBook+"' for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;   
+   }
+   //Get the FX holding instrument number
+   intCurrency1 = REF_GetValue(CURRENCY_TABLE,strCurrency1);
+   intCurrency2 = REF_GetValue(CURRENCY_TABLE,strCurrency2);
+   intInsNum = getFXHoldingInsNum(intCurrency1,intCurrency2);
+   if(intInsNum==FALSE)
+   {
+      strMessage = "FX Holding Instrument not found to book the deal for currency pair '"+strCurrency1+"/"+strCurrency2+"' for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;   
+   }
+
+   //Get the internal legal entity
+   strIntCpty = get_config_value("360T_INT_CPTY");
+   if(STR_IEqual(strBuyer,strIntCpty))
+   {
+      strExtCpty = strSeller;
+      strDealDirection = "BUY";
+   }
+   else if(STR_IEqual(strSeller,strIntCpty))
+   {
+      strExtCpty = strBuyer;
+      strDealDirection = "SELL";
+   }
+   else
+   {
+      strMessage = "Internal Cpty '"+strIntCpty+"' doesnt match with Buyer or Seller. Please verify Buyer/Seller values for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;   
+   }
+   intExtBUnit = getExternalBUnit(strExtCpty);
+   if(intExtBUnit == FALSE)
+   {
+      strMessage = "Error in getting External business unit in Endur for "+strExtCpty+" for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+   intIntBUnit = getInternalBUnit(strBook);
+   if(intIntBUnit == FALSE)
+   {
+      strMessage = "Error in getting Internal business unit in Endur for Portfolio "+strBook+" for Reference ID "+strReferenceID;
+      SCRIPT_PostStatus(strMessage);   
+      return strMessage;
+   }
+
+
+
+   //set the fields to FX table
+   TABLE_AddRow(tblFX);
+   TABLE_SetIntN(tblFX,"ins_num",1,intInsNum);
+   TABLE_SetIntN(tblFX,"cflow_type",1,FX_CFLOW);
+   TABLE_SetIntN(tblFX,"internal_bunit",1,intIntBUnit);
+   TABLE_SetIntN(tblFX,"internal_portfolio",1,intPortfolio);
+   TABLE_SetIntN(tblFX,"external_bunit",1,intExtBUnit);
+   TABLE_SetIntN(tblFX,"value_date",1,intValueDate);
+   TABLE_SetDoubleN(tblFX,"price",1,1.0);// This price field is set to 1.0 as endur calculate the FX field automatically
+   TABLE_SetIntN(tblFX,"currency",1,intCurrency1);
+   TABLE_SetIntN(tblFX,"currency2",1,intCurrency2);
+   TABLE_SetDoubleN(tblFX,"amount",1,dblNotnlAmount);
+   TABLE_SetDoubleN(tblFX,"spot_rate",1,dblSpotRate);
+   TABLE_SetDoubleN(tblFX,"forward_points",1,-dblFwdPts); 
+   TABLE_SetStringN(tblFX,"reference",1,strReferenceID);
+   TABLE_SetIntN(tblFX,"trade_date",1,intTradeDate);
+   TABLE_SetIntN(tblFX,"internal_contact",1,intEndurTrader);
+   TABLE_SetIntN(tblFX,"tran_status",1,TRAN_STATUS_VALIDATED);
+
+   //1.1: Start: Moved the logic of setting tran_info fields
+   
+   tblTranInfo = TABLE_New();
+   TABLE_AddCol(tblTranInfo, "type_name", COL_STRING);
+   TABLE_AddCol(tblTranInfo, "value", COL_STRING);
+   
+   if(!STR_IsEmpty(strReferenceID))
+   {
+       intRowNum = TABLE_AddRow(tblTranInfo);
+       TABLE_SetStringN(tblTranInfo, "type_name", intRowNum, "Extern_DealNr");
+       TABLE_SetStringN(tblTranInfo, "value", intRowNum, strReferenceID);
+   }
+   if(!STR_IsEmpty(strFXUsage))
+   {
+       intRowNum = TABLE_AddRow(tblTranInfo);
+       TABLE_SetStringN(tblTranInfo, "type_name", intRowNum, "FXUsage");
+       TABLE_SetStringN(tblTranInfo, "value", intRowNum, strFXUsage);
+   }
+   if(!STR_IEqual(strSubstrategy, "Not Applicable"))
+   {
+       intRowNum = TABLE_AddRow(tblTranInfo);
+       TABLE_SetStringN(tblTranInfo, "type_name", intRowNum, "SubStrategy");
+       TABLE_SetStringN(tblTranInfo, "value", intRowNum, strSubstrategy);
+   }
+   //1.6 - Start - Set the Hedge_Type Tran Info field
+   if(!STR_IsEmpty(strHedgeType))
+   {
+       intRowNum = TABLE_AddRow(tblTranInfo);
+       TABLE_SetStringN(tblTranInfo, "type_name", intRowNum, "Hedge_Type");
+       TABLE_SetStringN(tblTranInfo, "value", intRowNum, strHedgeType);
+   }
+   //1.6 - End
+   intRowNum = TABLE_AddRow(tblTranInfo);
+   TABLE_SetStringN(tblTranInfo, "type_name", intRowNum, "Extern_Source");
+   TABLE_SetStringN(tblTranInfo, "value", intRowNum, "360T-FX");
+
+   TABLE_SetTableN(tblFX, "tran_info", 1, tblTranInfo);
+   //1.1 - End
+   
+   intRetVal=TRAN_InsertFxSpotOrForwardTranTable(tblFX);
+
+   if(intRetVal == FALSE)
+   {
+      strMessage = "Error in booking the FX deal for Reference ID "+strReferenceID+". "+DB_RetrieveErrorInfo(intRetVal,"ERROR MSG");
+      SCRIPT_PostStatus(strMessage);  
+      TABLE_Destroy(tblTranInfo); //1.1
+      return strMessage;
+   }
+   intTranNum = getTranNum(strReferenceID);
+   if(intTranNum==FALSE || intTranNum==-1)
+   {
+      strMessage = "Error in retrieving the FX deal booked for Reference ID "+strReferenceID+". No Tran Num found";
+      SCRIPT_PostStatus(strMessage);  
+      TABLE_Destroy(tblTranInfo); //1.1
+      return strMessage;
+   }
+   else
+   {
+      strMessage = "FX Deal "+intTranNum+" booked for Reference ID "+strReferenceID+".";
+      LogException( G_EXCEPTION_CLASS_MSG, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_NO);
+      SCRIPT_PostStatus(strMessage);   
+   }
+   trnPtr = TRAN_Retrieve(intTranNum);
+   //1.5 Start
+   strSpotRate = STR_DoubleToStr(dblSpotRate);
+   strDealtRate = STR_DoubleToStr(dblPrice);
+   strOrigBuySell = TRANF_GetField(trnPtr, TRANF_BUY_SELL);
+   if(!(STR_IEqual(strOrigBuySell,strDealDirection)))//1.5 end: deal amendment not required always 
+   {
+      intRetVal = setTranfField(trnPtr,TRANF_BUY_SELL,0,"",strDealDirection,0);  
+      if(intRetVal != OLF_RETURN_SUCCEED)
+      {
+         strMessage = "Error in setting BUY/SELL Field for with value "+strDealDirection+" Reference ID "+strReferenceID+" and Tran Num "+intTranNum;
+         SCRIPT_PostStatus(strMessage);  
+         TABLE_Destroy(tblTranInfo); //1.1
+         TRAN_Destroy(trnPtr); //1.1
+         return strMessage;
+      }
+      //1.5 start
+      intRetVal = setTranfField(trnPtr,TRANF_FX_SPOT_RATE,0,"",strSpotRate,0);
+      if(intRetVal != OLF_RETURN_SUCCEED)
+      {
+         strMessage = "Error in setting FX SPOT RATE Field with value "+strSpotRate+" Reference ID "+strReferenceID+" and Tran Num "+intTranNum;
+         SCRIPT_PostStatus(strMessage);  
+         TABLE_Destroy(tblTranInfo); 
+         TRAN_Destroy(trnPtr); 
+         return strMessage;
+      }
+      intRetVal = setTranfField(trnPtr,TRANF_FX_DEALT_RATE,0,"",strDealtRate,0);
+      if(intRetVal != OLF_RETURN_SUCCEED)
+      {
+         strMessage = "Error in setting Fwd Price Field for with value "+strDealtRate+" Reference ID "+strReferenceID+" and Tran Num "+intTranNum;
+         SCRIPT_PostStatus(strMessage);  
+         TABLE_Destroy(tblTranInfo); 
+         TRAN_Destroy(trnPtr);
+         return strMessage;
+      }//1.5 end
+      intRetVal = TRAN_InsertByStatus(trnPtr,TRAN_STATUS_VALIDATED);
+      if(intRetVal != OLF_RETURN_SUCCEED)
+      {
+         strMessage = "Error in processing the FX deal booked after setting Buy/Sell for Reference ID "+strReferenceID+" and Tran Num "+intTranNum+". "+DB_RetrieveErrorInfo(intRetVal,"ERROR MSG");
+         SCRIPT_PostStatus(strMessage);  
+         TABLE_Destroy(tblTranInfo); //1.1
+         TRAN_Destroy(trnPtr); //1.1
+         return strMessage;
+      }
+
+   }
+   TRAN_Destroy(trnPtr);
+   TABLE_Destroy(tblTranInfo); //1.1
+   return "";
+}
+
+/*********************************************************************************
+Function:  getFXHoldingInsNum
+
+Input Parameter:
+int   intCurrency1 
+int   intCurrency2 
+
+Return Value: integer
+
+Description:
+This function gets the required holding instrument on which trade is to be booked
+*********************************************************************************/
+
+int getFXHoldingInsNum(int intCurrency1, int intCurrency2)
+{
+   string strSelect,
+               strMessage;
+   int intRetVal,
+            intInsNum,
+            intNumRows;
+   TablePtr tblInsNum;
+   tblInsNum = TABLE_New();
+
+   strSelect = "SELECT at.ins_num from ab_tran at \n"
+               +"JOIN ins_parameter ip1 on \n"
+               +"(at.ins_num=ip1.ins_num and at.toolset="+FX_TOOLSET+" and at.tran_type="+TRAN_TYPE_HOLDING+" and  ip1.param_seq_num=1 and ip1.currency = "+intCurrency2+") \n"
+               +"JOIN ins_parameter ip2 on \n"
+               +"(at.ins_num=ip2.ins_num and at.toolset="+FX_TOOLSET+" and at.tran_type="+TRAN_TYPE_HOLDING+" and ip2.param_seq_num = 0 and ip2.currency = "+intCurrency1+") \n"
+               +"and tran_status="+TRAN_STATUS_VALIDATED+" and internal_lentity="+REF_GetValue(PARTY_TABLE,"EGLCHE - LE");//Legal Entity EGL-CHE
+
+   intRetVal = EGL_TABLE_ExecISql(tblInsNum,strSelect,G_SCRIPT_NAME,0);
+   if (intRetVal != OLF_RETURN_SUCCEED)
+   {
+      strMessage = "Cannot execute SQL statement. Code = " + intRetVal + ", SQL = '" + strSelect + "'";
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_YES);
+      SCRIPT_PostStatus(strMessage);
+      return FALSE;
+   }
+   intNumRows = TABLE_GetNumRows(tblInsNum);
+   if (intNumRows<1)
+   {
+      strMessage = "No FX Holding instrument found for Currency Pair "+intCurrency1+"/"+intCurrency2;
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_YES);
+      SCRIPT_PostStatus(strMessage);
+      return FALSE;
+   }
+   intInsNum = TABLE_GetInt(tblInsNum,1,1);
+   return intInsNum;
+}
+
+/*********************************************************************************
+Function:  getExternalBUnit
+
+Input Parameter:
+string strExtCpty
+
+Return Value: integer
+
+Description:
+This function gets the party id for external business unit
+*********************************************************************************/
+
+int getExternalBUnit(string strExtCpty)
+{
+   string strSelect,
+          strMessage;
+          
+   int intRetVal,
+       intExtBUnit,
+       intNumRows;
+       
+   TablePtr tblExtCpty;
+   tblExtCpty = TABLE_New();
+   strSelect = "SELECT party_id from party p\n"
+               +" JOIN USER_360T_cpty_mapping ucm on (EndurCpty=p.short_name)\n"
+               +" WHERE p.party_status=1 and p.party_class=1 and lower(ucm.ExternCpty)=lower('"+strExtCpty+"')";
+   intRetVal = EGL_TABLE_ExecISql(tblExtCpty,strSelect,G_SCRIPT_NAME,0);
+   if (intRetVal != OLF_RETURN_SUCCEED)
+   {
+      strMessage = "Cannot execute SQL statement. Code = " + intRetVal + ", SQL = '" + strSelect + "'";
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_YES);
+      SCRIPT_PostStatus(strMessage);
+      return FALSE;
+   }
+   intNumRows = TABLE_GetNumRows(tblExtCpty);
+   if (intNumRows<1)
+   {
+      strMessage = "No External BU found for 360T Cpty "+strExtCpty;
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_YES);
+      SCRIPT_PostStatus(strMessage);
+      return FALSE;
+   }
+   intExtBUnit = TABLE_GetInt(tblExtCpty,1,1);
+   return intExtBUnit;
+}
+
+/*********************************************************************************
+Function:  getInternalBUnit
+
+Input Parameter:
+string strPortfolio
+
+Return Value: integer
+
+Description:
+This function gets the party id for internal business unit
+*********************************************************************************/
+
+int getInternalBUnit(string strPortfolio)
+{
+   string strSelect,
+               strMessage;
+   int intRetVal,
+            intIntBUnit,
+            intNumRows;
+   TablePtr tblIntCpty;
+   tblIntCpty = TABLE_New();
+   strSelect = "SELECT pp.party_id from party_portfolio pp\n"
+               +" JOIN portfolio p on (portfolio_id =p.id_number)\n"
+               +" JOIN party pa on (pa.party_id=pp.party_id and pa.party_class=1 and pa.party_status=1)"
+               +" WHERE lower(p.name)=lower('"+strPortfolio+"')";
+   intRetVal = EGL_TABLE_ExecISql(tblIntCpty,strSelect,G_SCRIPT_NAME,0);
+   if (intRetVal != OLF_RETURN_SUCCEED)
+   {
+      strMessage = "Cannot execute SQL statement. Code = " + intRetVal + ", SQL = '" + strSelect + "'";
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_YES);
+      SCRIPT_PostStatus(strMessage);
+      return FALSE;
+   }
+   intNumRows = TABLE_GetNumRows(tblIntCpty);
+   if (intNumRows<1)
+   {
+      strMessage = "No Internal BU found for 360T Book "+strPortfolio;
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_YES);
+      SCRIPT_PostStatus(strMessage);
+      return FALSE;
+   }
+   intIntBUnit = TABLE_GetInt(tblIntCpty,1,1);
+   return intIntBUnit;
+   
+}
+
+/*********************************************************************************
+Function:  getTranNum
+
+Input Parameter:
+string strReferenceID
+
+Return Value: integer
+
+Description:
+This function gets transaction number based on reference
+*********************************************************************************/
+
+int getTranNum(string strReferenceID)
+{
+   string strSelect,
+            strMessage;
+            
+   TablePtr tblTranNum;
+   
+   int intRetVal,
+            intTranNum,
+            intNumRows;
+            
+   strSelect = "SELECT tran_num from ab_tran where tran_status=3 and current_flag=1 and reference='"+strReferenceID+"' order by tran_num desc";
+   
+   tblTranNum = TABLE_New();
+   intRetVal = EGL_TABLE_ExecISql(tblTranNum,strSelect,G_SCRIPT_NAME,0);
+   if (intRetVal != OLF_RETURN_SUCCEED)
+   {
+      strMessage = "Cannot execute SQL statement. Code = " + intRetVal + ", SQL = '" + strSelect + "'";
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_YES);
+      SCRIPT_PostStatus(strMessage);
+      return -1;
+   }
+   intNumRows = TABLE_GetNumRows(tblTranNum);
+   if (intNumRows<1)
+   {
+      strMessage = "No existing deal found for Referece "+strReferenceID;
+      LogException( G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, G_MAILID_NONE, G_OLISTEN_YES);
+      SCRIPT_PostStatus(strMessage);
+      return FALSE;
+   }
+   intTranNum = TABLE_GetInt(tblTranNum,1,1);
+   return intTranNum;
+}
+
+/*********************************************************************************
+Function:  moveFile
+
+Input Parameter:
+string strSourcePath
+string strFileName
+string strDestPath
+int intEmail
+
+Return Value: integer
+
+Description:
+This function archieves the input file
+*********************************************************************************/
+
+int moveFile(string strSourcePath,string strFileName,string strDestPath,int intEmail)
+{
+   string  strCommand = "null",
+           strMessage;
+
+   int     intRetVal;
+
+   //Creating the command to be used for archiving
+   strCommand = "move \"" + strSourcePath+strFileName + "\" \"" + strDestPath+strFileName + "\"";
+   intRetVal = SYSTEM_Command(strCommand);
+
+   if (intRetVal != 0)
+   {
+      strMessage = "The file '" + strFileName + "' not moved to Archive Folder '" + strDestPath + "'!";
+      LogException(G_EXCEPTION_CLASS_ERROR, G_SCRIPT_NAME, strMessage, intEmail, G_OLISTEN_YES);
+      SCRIPT_PostStatus(strMessage);   
+      return FALSE;
+   }
+   return TRUE;
+}
+
+/*********************************************************************************
+Function:  BuildFlatTableFromXMLTable
+
+Input Parameter:
+TablePtr tblResult
+TablePtr tblXMLData
+int intDeep
+
+Return Value: integer
+
+Description:
+This function builds the XML table 
+*********************************************************************************/
+
+int BuildFlatTableFromXMLTable(TablePtr tblResult, TablePtr tblXMLData, int intDeep)
+{
+   TablePtr tblMatrixOfFlats,
+            tblSingleColOfFlats,
+            tblHelpSubTable,
+            tblHelpResultTable,
+            tblSingleColHelpTable,
+            tblHelpCopy,
+            tblHelpCopy2,
+            tblFullColList;
+
+   string   strFirstColName,
+            strColName;
+
+   int      intNumCols,
+            intNumRows,
+            intColCounter,
+            intRowCounter,
+            intColType,
+            intRetVal,
+            intNewRow,
+            intSubNumCols,
+            intSubColCounter,
+            intSubNumRows,
+            intSubRowCounter,
+            intCopyCounter;
+
+
+   intNumCols = TABLE_GetNumCols(tblXMLData);
+   intNumRows = TABLE_GetNumRows(tblXMLData);
+
+   // only for debugging
+   // if (intDeep == 8)
+   // {
+   //    intDeep = intDeep;
+   // }
+
+   // build table of flat tables matrix
+   tblMatrixOfFlats = TABLE_New("Matrix_of_flats");
+   for (intColCounter = 1; intColCounter <= intNumCols; intColCounter++)
+   {
+      TABLE_AddCol(tblMatrixOfFlats, "col_" + STR_IntToStr(intColCounter), COL_TABLE);
+      if (intColCounter == TRUE)
+      {
+         TABLE_AddNumRows(tblMatrixOfFlats, intNumRows);
+      }
+
+      intColType = TABLE_GetColType(tblXMLData, intColCounter);
+
+      for (intRowCounter = 1; intRowCounter <= intNumRows; intRowCounter++)
+      {
+         switch (intColType)
+         {
+            case COL_TABLE:
+            {
+               tblHelpSubTable = TABLE_GetTable(tblXMLData, intColCounter, intRowCounter);
+               tblHelpResultTable = TABLE_New();
+
+               intRetVal = BuildFlatTableFromXMLTable(tblHelpResultTable, tblHelpSubTable, intDeep + 1);
+
+               TABLE_SetTable(tblMatrixOfFlats, intColCounter, intRowCounter, tblHelpResultTable);
+               break;
+            }
+
+            case COL_STRING:
+            {
+               tblHelpResultTable = TABLE_New();
+               TABLE_AddCol(tblHelpResultTable, TABLE_GetColName(tblXMLData, intColCounter), COL_STRING);
+               TABLE_AddRow(tblHelpResultTable);
+               TABLE_SetString(tblHelpResultTable, 1, 1, TABLE_GetString(tblXMLData, intColCounter, intRowCounter));
+
+               TABLE_SetTable(tblMatrixOfFlats, intColCounter, intRowCounter, tblHelpResultTable);
+               break;
+            }
+         }
+      }
+   }
+
+
+   // harmonice cols numbers
+   for (intColCounter = 1; intColCounter <= intNumCols; intColCounter++)
+   {
+      tblFullColList = TABLE_New();
+      TABLE_AddCol(tblFullColList, "col_name", COL_STRING);
+      TABLE_AddCol(tblFullColList, "col_type", COL_INT);
+      TABLE_AddCol(tblFullColList, "row",      COL_INT);
+      TABLE_AddCol(tblFullColList, "pos",      COL_INT);
+
+      // get list of cols
+      for (intRowCounter = 1; intRowCounter <= intNumRows; intRowCounter++)
+      {
+         tblHelpCopy = TABLE_GetTable(tblMatrixOfFlats, intColCounter, intRowCounter);
+
+         intSubNumCols = TABLE_GetNumCols(tblHelpCopy);
+         for (intSubColCounter = 1; intSubColCounter <= intSubNumCols; intSubColCounter++)
+         {
+            strColName = TABLE_GetColName(tblHelpCopy, intSubColCounter);
+            intColType = TABLE_GetColType(tblHelpCopy, intSubColCounter);
+
+            intNewRow = TABLE_AddRow(tblFullColList);
+            TABLE_SetStringN(tblFullColList, "col_name", intNewRow, strColName);
+            TABLE_SetIntN(   tblFullColList, "col_type", intNewRow, intColType);
+            TABLE_SetIntN(   tblFullColList, "row",      intNewRow, intRowCounter);
+            TABLE_SetIntN(   tblFullColList, "pos",      intNewRow, intSubColCounter);
+         }
+      }
+
+      // remove not required entries
+      TABLE_Group(tblFullColList, "col_name, pos");
+
+      intSubNumRows = TABLE_GetNumRows(tblFullColList);
+      for (intRowCounter = 1; intRowCounter < intSubNumRows; intRowCounter++)
+      {
+         if (STR_Equal(TABLE_GetStringN(tblFullColList, "col_name", intRowCounter), TABLE_GetStringN(tblFullColList, "col_name", intRowCounter + 1)) == TRUE)
+         {
+            TABLE_SetIntN(tblFullColList, "pos", intRowCounter, -1);
+         }
+      }
+      TABLE_DeleteWhereValueN(tblFullColList, "pos", -1);
+
+      TABLE_Group(tblFullColList, "pos");
+
+      // set list of cols
+      for (intRowCounter = 1; intRowCounter <= intNumRows; intRowCounter++)
+      {
+         tblHelpCopy = TABLE_GetTable(tblMatrixOfFlats, intColCounter, intRowCounter);
+
+         tblHelpCopy2 = TABLE_New();
+         intSubNumRows = TABLE_GetNumRows(tblFullColList);
+         for (intSubRowCounter = 1; intSubRowCounter < intSubNumRows; intSubRowCounter++)
+         {
+            TABLE_AddCol(tblHelpCopy2, TABLE_GetStringN(tblFullColList, "col_name", intSubRowCounter), TABLE_GetIntN(tblFullColList, "col_type", intSubRowCounter));
+         }
+
+         strFirstColName = TABLE_GetColName(tblHelpCopy, 1);
+         TABLE_Select(tblHelpCopy2, tblHelpCopy, "*", strFirstColName + " NE xyz");
+
+         TABLE_SetTable(tblMatrixOfFlats, intColCounter, intRowCounter, tblHelpCopy2);
+         TABLE_Destroy(tblHelpCopy);
+      }
+
+      TABLE_Destroy(tblFullColList);      
+   }
+
+
+   // if cols > 1 build single col table of flat tables
+   if (intNumCols == TRUE)
+   {
+      tblSingleColOfFlats = TABLE_CopyTable(tblMatrixOfFlats);
+   }
+   else if (intNumCols == FALSE)
+   {
+      tblSingleColOfFlats = TABLE_New();
+   }
+   else
+   {
+      tblSingleColOfFlats = TABLE_New("Single_col_of_flats");
+      TABLE_AddCol(tblSingleColOfFlats, "col_1", COL_TABLE);
+      TABLE_AddNumRows(tblSingleColOfFlats, intNumRows);
+
+      for (intRowCounter = 1; intRowCounter <= intNumRows; intRowCounter++)
+      {
+         tblSingleColHelpTable = TABLE_New();
+
+         for (intColCounter = 1; intColCounter <= intNumCols; intColCounter++)
+         {
+            tblHelpCopy = TABLE_GetTable(tblMatrixOfFlats, intColCounter, intRowCounter);
+            if (TABLE_GetNumCols(tblHelpCopy) > 0)
+            {
+               // copy new cols
+               intSubNumCols = TABLE_GetNumCols(tblHelpCopy);
+               for (intSubColCounter = 1; intSubColCounter <= intSubNumCols; intSubColCounter++)
+               {
+                  TABLE_AddCol(tblSingleColHelpTable, TABLE_GetColName(tblHelpCopy, intSubColCounter), TABLE_GetColType(tblHelpCopy, intSubColCounter));
+               }
+
+               intSubNumRows = TABLE_GetNumRows(tblHelpCopy);
+               if (TABLE_GetNumRows(tblSingleColHelpTable) == FALSE)
+               {
+                  // copy only all rows
+                  TABLE_AddNumRows(tblSingleColHelpTable, intSubNumRows);
+
+                  for (intSubColCounter = 1; intSubColCounter <= intSubNumCols; intSubColCounter++)
+                  {
+                     TABLE_CopyColN(tblHelpCopy, TABLE_GetColName(tblHelpCopy, intSubColCounter), tblSingleColHelpTable, TABLE_GetColName(tblHelpCopy, intSubColCounter));
+                  }
+               }
+               else
+               {
+                  if (intSubNumRows == TRUE)
+                  {
+                     // copy my one row to all existing rows
+                     intSubNumRows = TABLE_GetNumRows(tblSingleColHelpTable);
+
+                     // Simple set values
+                     for (intSubColCounter = 1; intSubColCounter <= intSubNumCols; intSubColCounter++)
+                     {
+                        for (intSubRowCounter = 1; intSubRowCounter <= intSubNumRows; intSubRowCounter++)
+                        {
+                           // todo for non string cols
+                           TABLE_SetStringN(tblSingleColHelpTable, TABLE_GetColName(tblHelpCopy, intSubColCounter), intSubRowCounter, TABLE_GetString(tblHelpCopy, intSubColCounter, 1));
+                        }
+                     }
+                  }
+                  else if (intSubNumRows > 0)
+                  {
+                     // multiple rows with intSubNumRows
+                     intSubNumRows = TABLE_GetNumRows(tblSingleColHelpTable);
+
+                     for (intCopyCounter = 1; intCopyCounter < TABLE_GetNumRows(tblHelpCopy); intCopyCounter++)
+                     {
+                        TABLE_CopyRowAddRange(tblSingleColHelpTable, 1, intSubNumRows, tblSingleColHelpTable);
+                     }
+
+                     for (intCopyCounter = 1; intCopyCounter <= TABLE_GetNumRows(tblHelpCopy); intCopyCounter++)
+                     {
+                        for (intSubColCounter = 1; intSubColCounter <= intSubNumCols; intSubColCounter++)
+                        {
+                           for (intSubRowCounter = 1; intSubRowCounter <= intSubNumRows; intSubRowCounter++)
+                           {
+                              // todo for non string cols
+                              TABLE_SetStringN(tblSingleColHelpTable, TABLE_GetColName(tblHelpCopy, intSubColCounter), intSubRowCounter + (intSubNumRows * (intCopyCounter  - 1)), TABLE_GetString(tblHelpCopy, intSubColCounter, intCopyCounter));
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+         }
+
+         TABLE_SetTable(tblSingleColOfFlats, 1, intRowCounter, tblSingleColHelpTable);
+      }
+   }
+
+   TABLE_Destroy(tblMatrixOfFlats);
+
+
+   // if rows = 1 build one flat table
+   if (intNumRows > 0)
+   {
+      for (intRowCounter = 1; intRowCounter <= intNumRows; intRowCounter++)
+      {
+         tblHelpCopy = TABLE_GetTable(tblSingleColOfFlats, 1, intRowCounter);
+
+         if (TABLE_GetNumCols(tblHelpCopy) > 0)
+         {
+            strFirstColName = TABLE_GetColName(tblHelpCopy, 1);
+
+            if (TABLE_GetNumCols(tblResult) == FALSE)
+            {
+               TABLE_Select(tblResult, tblHelpCopy, "*", strFirstColName + " NE xyz");
+            }
+            else
+            {
+               TABLE_CopyRowAddAll(tblHelpCopy, tblResult);
+            }
+         }
+      }
+   }
+
+   TABLE_Destroy(tblSingleColOfFlats);
+
+   // TABLE_ViewTable(tblResult);
+
+   return TRUE;
+}
+
+//1.2:Start: Handling special charachters in substrategy field
+/*********************************************************************************
+Function:     convertSpecialStringToString
+
+Input Parameter:
+string        strSource: substrategy name
+
+Return Value: string: substategy with correct umlaut  
+
+Description:
+The function replaces incorrect umlauts with correct names
+*********************************************************************************/
+string convertSpecialStringToString(string strSource)
+{
+   strSource = replace_characters(strSource,"Ã¤","ä");
+   strSource = replace_characters(strSource,"Ã¼","ü");
+   strSource = replace_characters(strSource,"Ã¶","ö");
+   strSource = replace_characters(strSource,"Ã„","Ä");
+   strSource = replace_characters(strSource,"Ãœ","Ü");
+   strSource = replace_characters(strSource,"Ã–","Ö");
+   strSource = replace_characters(strSource,"ÃŸ","ß");
+
+   return strSource;
+}
+//1.2:End

@@ -1,0 +1,133 @@
+book,ORIG_INSTRUMENT_KEY,CURRENCY_KEY
+CBL_AST_ABPM,Power Trayport Forward,EUR
+CEE_LO_MGMT,Power Physical,EUR
+CEE_LO_MGMT,Power Trayport Forward,EUR
+CEE_LO_MGMT,Power Trayport Spot,EUR
+CEE_LO_XBO,Power Physical,EUR
+CEE_PWR_TS1,Power Physical,EUR
+CFT_AST_TEAM_TRAD,Power Physical,EUR
+CFT_AST_TEAM_TRAD,Power Trayport Forward,EUR
+CFT_AST_TERMIN_EIGEN,Power Physical,EUR
+CFT_AST_TERMIN_HA,Power Physical,EUR
+CFT_AST_TERMIN_HA_N,Power Physical,EUR
+CFT_AST_TERMIN_HA_PH,Power Physical,EUR
+CFT_AST_TERMIN_PROP,Power Physical,EUR
+CFT_AST_TERMIN_TR_HDG,Power Physical,EUR
+CFT_AST_TERMIN_TR_HDG,Power Trayport Forward,EUR
+CFT_AST_TERMIN_TRAD,Power Physical,EUR
+CFT_AST_TERMIN_TRAD,Power Trayport Forward,EUR
+CFT_STR_DYNKU_TR_HDG,Power Physical,EUR
+CFT_STR_DYNKU_TR_HDG,Power Trayport Forward,EUR
+CFT_STR_DYNLT_TR_HDG,Power Physical,EUR
+CFT_STR_DYNLT_TR_HDG,Power Trayport Forward,EUR
+CFT_STR_DYNOPT_TR_HDG,Power Trayport Forward,EUR
+CFT_STR_DYNSTRU_TR,Power Physical,EUR
+CFT_STR_DYNSTRU_TR,Power Trayport Forward,EUR
+CFT_STR_DYNSTRU_TR,Power Trayport Spot,EUR
+CFT_STR_DYNTRA_TR,Power Physical,EUR
+CFT_STR_DYNTRA_TR,Power Trayport Forward,EUR
+CFT_STR_DYNVOLA_TR,Power Trayport Forward,EUR
+CFT_STR_DYNVOLA_TR,Power Yearly Put Option,EUR
+CFT_STR_LS_HA,Power Physical,EUR
+CFT_STR_LS_HA,Power Trayport Forward,EUR
+CFT_STR_LS_HA_PH,Power Physical,EUR
+CFT_STR_LS_HA_PH,Power Trayport Forward,EUR
+CFT_STR_LS_OU,Power Trayport Forward,EUR
+CFT_STR_LS_TR_HDG,Power Physical,EUR
+CFT_STR_LS_TR_HDG,Power Trayport Forward,EUR
+CO_CH_GRN_EXTSRC,Green Certificates,CHF
+CO_CH_GRN_EXTSRC,Green Certificates,EUR
+CO_CH_GRN_INTSRC,Green Certificates,CHF
+CO_CH_GRN_INTSRC,Green Certificates,EUR
+COLLAB_TRAD,Power Physical,EUR
+CST_TRD_SPEC_SHORTTRM,Power Physical,EUR
+CT_AT_GAS_TRAD,Gas OTC Purchase,EUR
+CT_AT_PWR_TRAD,Power Physical,EUR
+CT_BNL_B2B,Green Certificates,EUR
+CT_BNL_GAS_FS,Gas OTC Purchase,EUR
+CT_BNL_PWR_TRAD,Power Physical,EUR
+CT_BNL_PWR_TRAD,Power Trayport Forward,EUR
+CT_BNL_STP_TRAD,Power Physical,EUR
+CT_CH_GAS_FS,Gas OTC Purchase,EUR
+CT_CH_PWR_STP_TRAD,Power Physical,EUR
+CT_CH_PWR_STP_TRAD,Power Yearly Call Option,EUR
+CT_CZ_GAS_COOP,Gas OTC Purchase,EUR
+CT_CZ_PWR_COOP,Power Physical,EUR
+CT_CZ_PWR_COOP,Power Yearly Call Option,EUR
+CT_CZ_PWR_COOP,Power Yearly Put Option,EUR
+CT_DE_GAS_TRAD,Gas OTC Purchase,EUR
+CT_FR_GAS_TRAD,Gas OTC Purchase,EUR
+CT_FR_GAS_TRAD,Green Certificates,PLN
+CT_FR_RW,Power Physical,EUR
+CT_PL_RW,Power Trayport Forward,EUR
+CT_PL_RW,Power Physical,EUR
+CT_PL_SET_RW,Green Certificates,PLN
+CT_PL_SET_RW,Power Physical,EUR
+CT_PL_TRAD,Green Certificates,PLN
+CT_UK_GAS_FS,Gas OTC Purchase,GBP
+CT_UK_PWR_CAP_BRITN,Power Physical,GBP
+CT_UK_PWR_FS,Green Certificates,GBP
+CT_UK_PWR_FS,Power Trayport Forward,GBP
+CT_UK_PWR_OPTIM,Gas OTC Purchase,GBP
+CT_UK_PWR_OPTIM,Power Physical,GBP
+CT_UK_PWR_OPTIM,Power Trayport Forward,EUR
+CT_UK_PWR_OPTIM,Power Trayport Spot,GBP
+G_EUR_ST,Gas OTC Purchase,EUR
+G_EUR_STOR,Gas OTC Purchase,EUR
+G_TRAD_EXEC,Gas OTC Purchase,EUR
+G_TRAD_STOR,Gas OTC Purchase,EUR
+GAS_EUR_AB,Gas OTC Purchase,EUR
+GAS_EUR_CAPA_COMM,Gas OTC Purchase,EUR
+GAS_EUR_CEE_ORIG,Gas OTC Purchase,EUR
+GAS_EUR_CURVE,Gas OTC Purchase,EUR
+GAS_EUR_CURVE,Gas OTC Purchase,GBP
+GAS_EUR_EUROPE,Gas OTC Purchase,EUR
+GAS_EUR_INDEX,Gas OTC Purchase,EUR
+GAS_EUR_PROP,Gas OTC Purchase,EUR
+GAS_EUR_SPEC,Gas OTC Purchase,EUR
+GAS_EUR_STRAT,Gas OTC Purchase,EUR
+GAS_HUB_SLEEVE,Gas OTC Purchase,EUR
+GAS_HUB_SLEEVE,Gas OTC Purchase,GBP
+GD_ORI_OU,Green Certificates,EUR
+GD_ORI_TR,Green Certificates,EUR
+GD_ORI_TR,Green Certificates,PLN
+GTR_GAS_LTC_HEDGE,Gas OTC Purchase,EUR
+GTR_LNG_GAS,Gas OTC Purchase,EUR
+GXB_PWR_SEE,Power Physical,EUR
+GXB_PWR_SRB,Power Physical,EUR
+LTCD_GAS_H,Gas OTC Purchase,EUR
+M_EUR_GD_HDG,Green Certificates,EUR
+M_GD_TRAD,Green Certificates,EUR
+M_ITA_CSH,Gas OTC Purchase,EUR
+M_ITA_XB,Power Physical,EUR
+M_ITA_XB_OPTI,Power Physical,EUR
+M_ITA_XB_TRAD,Power Physical,EUR
+MGMT_ORI_RW,Power Physical,EUR
+P_DIR_POWER,Power Trayport Forward,EUR
+P_DIR_POWER,Power Trayport Spot,EUR
+P_EUR_PROP,Power Physical,EUR
+P_EUR_PROP,Power Trayport Forward,EUR
+P_EUR_STP,Power Physical,EUR
+P_EUR_STP,Power Trayport Forward,EUR
+P_EUR_STP_OPT,Power Physical,EUR
+P_EUR_STP_OPT,Power Trayport Forward,EUR
+P_EUR_STP_OPT,Power Yearly Call Option,EUR
+P_EUR_STP_OPT,Power Yearly Put Option,EUR
+P_EUR_XB,Power Physical,EUR
+P_EUR_XB,Power Trayport Forward,EUR
+P_FRA_ORIG,Power Physical,EUR
+P_FRA_PROP,Power Physical,EUR
+P_FRA_PROP,Power Trayport Forward,EUR
+P_FRA_PROP,Power Trayport Spot,EUR
+P_STP_OPTQM,Power Trayport Forward,EUR
+P_STP_OPTQM,Power Trayport Spot,EUR
+PWR_DIR_TS1,Power Physical,EUR
+PWR_DIR_TS1,Power Trayport Forward,EUR
+PWR_DIR_TS2,Power Trayport Forward,EUR
+PWR_DIR_TS3,Power Trayport Forward,EUR
+PWR_EXE_GERFRA_JEK,Power Physical,EUR
+PWR_SYS_TS1,Power Physical,EUR
+S_ESP_PROP,Power Exchange Futures Contract,EUR
+ST_TR_PWR_TRAD,Power Financial Swap,EUR
+STR_EUR_STR_OPT,Power Trayport Forward,EUR
+UK_GAS_TRAD,Gas OTC Purchase,GBP
